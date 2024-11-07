@@ -308,7 +308,8 @@ static size_t fft_analyze(float dt)
     // Smooth out and smear the values
     for (size_t i = 0; i < m; ++i) {
         float smoothness = 8;
-        p->out_smooth[i] += (p->out_log[i] - p->out_smooth[i])*smoothness*dt;
+        float signal = 0.5;
+        p->out_smooth[i] = (signal*p->out_log[i] + (1.0 - signal)*p->out_smooth[i]) + (p->out_log[i] - p->out_smooth[i])*smoothness*dt;
         float smearness = 3;
         p->out_smear[i] += (p->out_smooth[i] - p->out_smear[i])*smearness*dt;
     }
