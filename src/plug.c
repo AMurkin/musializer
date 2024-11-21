@@ -1736,17 +1736,81 @@ static void rendering_screen(void)
     }
 }
 
+int* GenerateCodePoints(int start, int end, int* count) {
+    // Calculate the number of code points
+    *count = end - start + 1;
+    
+    // Allocate memory for the code points array
+    int* codepoints = (int*)malloc(*count * sizeof(int));
+    if (codepoints == NULL) {
+        *count = 0; // Set count to 0 if memory allocation fails
+        return NULL;
+    }
+
+    // Fill the array with code points
+    for (int i = 0; i < *count; i++) {
+        codepoints[i] = start + i;
+    }
+
+    return codepoints;
+}
+
+int* CombineCodePoints(int** ranges, int* sizes, int numRanges, int* totalCount) {
+    // Calculate total size
+    *totalCount = 0;
+    for (int i = 0; i < numRanges; i++) {
+        *totalCount += sizes[i];
+    }
+
+    // Allocate memory for the combined code points
+    int* combinedCodepoints = (int*)malloc(*totalCount * sizeof(int));
+    if (combinedCodepoints == NULL) {
+        *totalCount = 0; // Set count to 0 if memory allocation fails
+        return NULL;
+    }
+
+    // Fill the combined array
+    int index = 0;
+    for (int i = 0; i < numRanges; i++) {
+        for (int j = 0; j < sizes[i]; j++) {
+            combinedCodepoints[index++] = ranges[i][j];
+        }
+    }
+
+    return combinedCodepoints;
+}
+
 static void load_assets(void)
 {
     size_t data_size = 0;
     void *data = NULL;
 
+    int asciiSize;
+    int* asciiRange = GenerateCodePoints(32, 126, &asciiSize);
+    int punctuationSize;
+    int* punctuationRange = GenerateCodePoints(0x2000, 0x206F, &punctuationSize);
+    //Cyrillic
+    int langSize;
+    int* langRange = GenerateCodePoints(0x0400, 0x04FF, &langSize);
+
+    int *codepointsRanges[] = {asciiRange, punctuationRange, langRange};
+    int codepointsSizes[] = {asciiSize, punctuationSize, langSize};
+
+    int codepointsCount;
+    int *codepoints = CombineCodePoints(codepointsRanges, codepointsSizes, 3, &codepointsCount);
+
     const char *alegreya_path = "./resources/fonts/Alegreya-Regular.ttf";
     data = plug_load_resource(alegreya_path, &data_size);
-        p->font = LoadFontFromMemory(GetFileExtension(alegreya_path), data, data_size, FONT_SIZE, NULL, 0);
+        p->font = LoadFontFromMemory(GetFileExtension(alegreya_path), data, data_size, FONT_SIZE, codepoints, codepointsCount);
         GenTextureMipmaps(&p->font.texture);
         SetTextureFilter(p->font.texture, TEXTURE_FILTER_BILINEAR);
     plug_free_resource(data);
+
+    // Free codepoints, atlas has already been generated
+    free(asciiRange);
+    free(punctuationRange);
+    free(langRange);
+    free(codepoints);
 
     // TODO: Maybe we should try to keep compiling different versions of shaders
     // until one of them works?
