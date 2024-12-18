@@ -317,6 +317,38 @@ static size_t fft_analyze(float dt)
     return m;
 }
 
+// L in [0.0, 1.0], C in [0.0, 1.0], H in radians
+Color ColorFromOkLCH(float L, float C, float H)
+{
+    // lchToLAB
+    float A = 0.0f;
+    float B = 0.0f;
+    if(L != 0.0f) {
+        A = cosf(H) * C;
+        B = sinf(H) * C;
+    }
+
+    // oklabTosRGB: oklabToLMS
+    float LMS_L = L + A *  0.3963 + B *  0.2158;
+    float LMS_M = L + A * -0.1056 + B * -0.0638;
+    float LMS_S = L + A * -0.0895 + B * -1.2915;
+
+    // oklabTosRGB: lmsToLinearRGBD65
+    LMS_L = powf(LMS_L, 3.0f);
+    LMS_M = powf(LMS_M, 3.0f);
+    LMS_S = powf(LMS_S, 3.0f);
+
+    float r = LMS_L *  4.0767f + LMS_M * -3.3077f + LMS_S *  0.231f;
+    float g = LMS_L * -1.2684f + LMS_M *  2.6097f + LMS_S * -0.3413f;
+    float b = LMS_L * -0.0042f + LMS_M * -0.7034f + LMS_S *  1.7076f;
+    return (Color){
+        (unsigned char)(255.0f * (r < 0.0f ? 0.0f : (r > 1.0f ? 1.0f : r))),
+        (unsigned char)(255.0f * (g < 0.0f ? 0.0f : (g > 1.0f ? 1.0f : g))),
+        (unsigned char)(255.0f * (b < 0.0f ? 0.0f : (b > 1.0f ? 1.0f : b))),
+        255
+    };
+}
+
 static void fft_render(Rectangle boundary, size_t m)
 {
     // The width of a single bar
@@ -326,11 +358,19 @@ static void fft_render(Rectangle boundary, size_t m)
     float saturation = 0.75f;
     float value = 1.0f;
 
+    bool use_OkLCH = true;
+    Color colors[FFT_SIZE];
+    float lightness = value*0.85f;
+    float chroma = saturation*0.25f;
+    for (size_t i = 0; i < m; ++i) {
+        float hue = (float)i/m;
+        float lightness_mod = 0.725f + p->out_log[i] * 0.275f; // out_log instead of out_smooth
+        colors[i] = use_OkLCH ? ColorFromOkLCH(lightness*lightness_mod, chroma, hue*PI*2) : ColorFromHSV(hue*360, saturation, value);
+    }
+
     // Display the Bars
     for (size_t i = 0; i < m; ++i) {
         float t = p->out_smooth[i];
-        float hue = (float)i/m;
-        Color color = ColorFromHSV(hue*360, saturation, value);
         Vector2 startPos = {
             boundary.x + i*cell_width + cell_width/2,
             boundary.y + boundary.height - boundary.height*2/3*t,
@@ -340,7 +380,7 @@ static void fft_render(Rectangle boundary, size_t m)
             boundary.y + boundary.height,
         };
         float thick = cell_width/3*sqrtf(t);
-        DrawLineEx(startPos, endPos, thick, color);
+        DrawLineEx(startPos, endPos, thick, colors[i]);
     }
 
     Texture2D texture = { rlGetTextureIdDefault(), 1, 1, 1, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8 };
@@ -352,8 +392,6 @@ static void fft_render(Rectangle boundary, size_t m)
     for (size_t i = 0; i < m; ++i) {
         float start = p->out_smear[i];
         float end = p->out_smooth[i];
-        float hue = (float)i/m;
-        Color color = ColorFromHSV(hue*360, saturation, value);
         Vector2 startPos = {
             boundary.x + i*cell_width + cell_width/2,
             boundary.y + boundary.height - boundary.height*2/3*start,
@@ -372,7 +410,7 @@ static void fft_render(Rectangle boundary, size_t m)
                 .height = endPos.y - startPos.y
             };
             Rectangle source = {0, 0, 1, 0.5};
-            DrawTexturePro(texture, source, dest, origin, 0, color);
+            DrawTexturePro(texture, source, dest, origin, 0, colors[i]);
         } else {
             Rectangle dest = {
                 .x = endPos.x - radius/2,
@@ -381,7 +419,7 @@ static void fft_render(Rectangle boundary, size_t m)
                 .height = startPos.y - endPos.y
             };
             Rectangle source = {0, 0.5, 1, 0.5};
-            DrawTexturePro(texture, source, dest, origin, 0, color);
+            DrawTexturePro(texture, source, dest, origin, 0, colors[i]);
         }
     }
     EndShaderMode();
@@ -392,8 +430,6 @@ static void fft_render(Rectangle boundary, size_t m)
     BeginShaderMode(p->circle);
     for (size_t i = 0; i < m; ++i) {
         float t = p->out_smooth[i];
-        float hue = (float)i/m;
-        Color color = ColorFromHSV(hue*360, saturation, value);
         Vector2 center = {
             boundary.x + i*cell_width + cell_width/2,
             boundary.y + boundary.height - boundary.height*2/3*t,
@@ -403,7 +439,7 @@ static void fft_render(Rectangle boundary, size_t m)
             .x = center.x - radius,
             .y = center.y - radius,
         };
-        DrawTextureEx(texture, position, 0, 2*radius, color);
+        DrawTextureEx(texture, position, 0, 2*radius, colors[i]);
     }
     EndShaderMode();
 }
