@@ -53,6 +53,7 @@ jobs:
           name: ubuntu-${{ matrix.cc }}-build-folder
           path: build/
   windows:
+    name: windows (${{ matrix.hotreload == true && 'hotreload' || '' }})
     runs-on: windows-latest
     strategy:
       matrix:
