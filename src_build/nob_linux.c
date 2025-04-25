@@ -11,19 +11,18 @@ bool build_musializer(void)
     // Like `clang` for instance
     nob_cmd_append(&cmd, "cc",
         "-Wall", "-Wextra", "-ggdb",
-        "-I.", "-I./raylib/raylib-"RAYLIB_VERSION"/src/",
+        "-I.", "-I"RAYLIB_SRC_FOLDER,
         "-fPIC", "-shared",
-        "-O3",
         "-o", "./build/libplug.so",
-        "./src/plug.c", "./src/ffmpeg_linux.c",
+        "./src/plug.c", "./src/ffmpeg_posix.c", "./thirdparty/tinyfiledialogs.c",
         nob_temp_sprintf("-L./build/raylib/%s", MUSIALIZER_TARGET_NAME), "-l:libraylib.so",
-        "-lm", "-ldl", "-lpthread");
+        "-O3", "-march=native", "-ffast-math",
+        "-lm", "-ldl", "-flto=auto", "-lpthread");
     nob_da_append(&procs, nob_cmd_run_async_and_reset(&cmd));
 
     nob_cmd_append(&cmd, "cc",
         "-Wall", "-Wextra", "-ggdb",
-        "-I.", "-I./raylib/raylib-"RAYLIB_VERSION"/src/",
-        "-O3",
+        "-I.", "-I"RAYLIB_SRC_FOLDER,
         "-o", "./build/musializer",
         "./src/musializer.c", "./src/hotreload_posix.c",
         "-Wl,-rpath=./build/",
@@ -32,7 +31,8 @@ bool build_musializer(void)
         // NOTE: just in case somebody wants to run musializer from within the ./build/ folder
         nob_temp_sprintf("-Wl,-rpath=./raylib/%s", MUSIALIZER_TARGET_NAME),
         nob_temp_sprintf("-L./build/raylib/%s", MUSIALIZER_TARGET_NAME),
-        "-l:libraylib.so", "-lm", "-ldl", "-lpthread");
+        "-O3", "-march=native", "-ffast-math",
+        "-l:libraylib.so", "-lm", "-ldl", "-flto=auto", "-lpthread");
     nob_da_append(&procs, nob_cmd_run_async_and_reset(&cmd));
 
     if (!nob_procs_wait_and_reset(&procs)) nob_return_defer(false);
@@ -40,12 +40,12 @@ bool build_musializer(void)
     nob_cmd_append(&cmd, "cc",
         "-Wall", "-Wextra", "-ggdb",
         "-I.",
-        "-I./raylib/raylib-"RAYLIB_VERSION"/src/",
-        "-O3",
+        "-I"RAYLIB_SRC_FOLDER,
         "-o", "./build/musializer",
-        "./src/plug.c", "./src/ffmpeg_linux.c", "./src/musializer.c",
+        "./src/plug.c", "./src/ffmpeg_posix.c", "./src/musializer.c", "./thirdparty/tinyfiledialogs.c",
         nob_temp_sprintf("-L./build/raylib/%s", MUSIALIZER_TARGET_NAME), "-l:libraylib.a",
-        "-lm", "-ldl", "-lpthread");
+        "-O3", "-march=native", "-ffast-math",
+        "-lm", "-ldl", "-flto=auto", "-lpthread");
     if (!nob_cmd_run_sync_and_reset(&cmd)) nob_return_defer(false);
 #endif // MUSIALIZER_HOTRELOAD
 
@@ -74,7 +74,7 @@ bool build_raylib(void)
     }
 
     for (size_t i = 0; i < NOB_ARRAY_LEN(raylib_modules); ++i) {
-        const char *input_path = nob_temp_sprintf("./raylib/raylib-"RAYLIB_VERSION"/src/%s.c", raylib_modules[i]);
+        const char *input_path = nob_temp_sprintf(RAYLIB_SRC_FOLDER"%s.c", raylib_modules[i]);
         const char *output_path = nob_temp_sprintf("%s/%s.o", build_path, raylib_modules[i]);
         output_path = nob_temp_sprintf("%s/%s.o", build_path, raylib_modules[i]);
 
@@ -82,8 +82,8 @@ bool build_raylib(void)
 
         if (nob_needs_rebuild(output_path, &input_path, 1)) {
             nob_cmd_append(&cmd, "cc",
-                "-ggdb", "-DPLATFORM_DESKTOP", "-fPIC", "-DSUPPORT_FILEFORMAT_FLAC=1",
-                "-I./raylib/raylib-"RAYLIB_VERSION"/src/external/glfw/include",
+                "-ggdb", "-DPLATFORM_DESKTOP", "-D_GLFW_X11", "-fPIC", "-DSUPPORT_FILEFORMAT_FLAC=1",
+                "-I"RAYLIB_SRC_FOLDER"external/glfw/include",
                 "-c", input_path,
                 "-o", output_path);
             nob_da_append(&procs, nob_cmd_run_async_and_reset(&cmd));

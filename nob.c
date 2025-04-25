@@ -1,18 +1,12 @@
-#include <assert.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdbool.h>
-#include <stdarg.h>
-#include <string.h>
-#include <errno.h>
-
 #define NOB_IMPLEMENTATION
-#include "./nob.h"
+#define NOB_STRIP_PREFIX
+#define NOB_EXPERIMENTAL_DELETE_OLD
+#include "./thirdparty/nob.h"
 #include "./src_build/configurer.c"
 
 int main(int argc, char **argv)
 {
-    NOB_GO_REBUILD_URSELF(argc, argv);
+    NOB_GO_REBUILD_URSELF_PLUS(argc, argv, "./thirdparty/nob.h", "./src_build/configurer.c");
 
     const char *program = nob_shift_args(&argc, &argv);
 
@@ -30,6 +24,34 @@ int main(int argc, char **argv)
     nob_log(NOB_INFO, "--- STAGE 1 ---");
 
     if (!nob_mkdir_if_not_exists("build")) return 1;
+
+    if (argc > 0) {
+        const char *command_name = shift(argv, argc);
+        if (strcmp(command_name, "config") == 0) {
+            // TODO: an ability to set the target through the `config` command
+            while (argc > 0) {
+                const char *flag_name = shift(argv, argc);
+                bool found = false;
+                for (size_t i = 0; !found && i < ARRAY_LEN(feature_flags); ++i) {
+                    // TODO: an ability to disable flags that enabled by default
+                    //   We don't have such flags yet, but maybe we will at some point?
+                    if (strcmp(feature_flags[i].name, flag_name) == 0) {
+                        feature_flags[i].enabled_by_default = true;
+                        found = true;
+                    }
+                }
+                if (!found) {
+                    nob_log(ERROR, "Unknown command `%s`", flag_name);
+                    return 1;
+                }
+            }
+            if (!generate_default_config(CONFIG_PATH)) return 1;
+            return 0;
+        } else {
+            nob_log(ERROR, "Unknown command `%s`", command_name);
+            return 1;
+        }
+    }
 
     int config_exists = nob_file_exists(CONFIG_PATH);
     if (config_exists < 0) return 1;

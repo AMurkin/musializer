@@ -1,5 +1,13 @@
 #define MUSIALIZER_TARGET_NAME "win64-mingw"
 
+// On windows, mingw doesn't have the `x86_64-w64-mingw32-` prefix for tools such as `windres` or `ar`.
+// For gcc, you can use both `x86_64-w64-mingw32-gcc` and just `gcc`
+#ifdef _WIN32
+#define MAYBE_PREFIXED(x) x
+#else
+#define MAYBE_PREFIXED(x) "x86_64-w64-mingw32-"x
+#endif // _WIN32
+
 bool build_musializer(void)
 {
     bool result = true;
@@ -7,13 +15,7 @@ bool build_musializer(void)
     Nob_Procs procs = {0};
 
     cmd.count = 0;
-    #ifdef _WIN32
-        // On windows, mingw doesn't have the `x86_64-w64-mingw32-` prefix for windres.
-        // For gcc, you can use both `x86_64-w64-mingw32-gcc` and just `gcc`
-        nob_cmd_append(&cmd, "windres");
-    #else
-        nob_cmd_append(&cmd, "x86_64-w64-mingw32-windres");
-    #endif // _WIN32
+        nob_cmd_append(&cmd, MAYBE_PREFIXED("windres"));
         nob_cmd_append(&cmd, "./src/musializer.rc");
         nob_cmd_append(&cmd, "-O", "coff");
         nob_cmd_append(&cmd, "-o", "./build/musializer.res");
@@ -24,24 +26,25 @@ bool build_musializer(void)
                 nob_cmd_append(&cmd, "x86_64-w64-mingw32-gcc");
                 nob_cmd_append(&cmd, "-mwindows", "-Wall", "-Wextra", "-ggdb");
                 nob_cmd_append(&cmd, "-I.");
-                nob_cmd_append(&cmd, "-I./raylib/raylib-"RAYLIB_VERSION"/src/");
+                nob_cmd_append(&cmd, "-I"RAYLIB_SRC_FOLDER);
                 nob_cmd_append(&cmd, "-fPIC", "-shared");
                 nob_cmd_append(&cmd, "-static-libgcc");
                 nob_cmd_append(&cmd, "-o", "./build/libplug.dll");
                 nob_cmd_append(&cmd,
                     "./src/plug.c",
-                    "./src/ffmpeg_windows.c");
+                    "./src/ffmpeg_windows.c",
+                    "./thirdparty/tinyfiledialogs.c");
                 nob_cmd_append(&cmd,
                     "-L./build",
                     "-l:raylib.dll");
-                nob_cmd_append(&cmd, "-lwinmm", "-lgdi32");
+                nob_cmd_append(&cmd, "-lwinmm", "-lgdi32", "-lole32");
             nob_da_append(&procs, nob_cmd_run_async(cmd));
 
             cmd.count = 0;
                 nob_cmd_append(&cmd, "x86_64-w64-mingw32-gcc");
                 nob_cmd_append(&cmd, "-mwindows", "-Wall", "-Wextra", "-ggdb");
                 nob_cmd_append(&cmd, "-I.");
-                nob_cmd_append(&cmd, "-I./raylib/raylib-"RAYLIB_VERSION"/src/");
+                nob_cmd_append(&cmd, "-I"RAYLIB_SRC_FOLDER);
                 nob_cmd_append(&cmd, "-o", "./build/musializer");
                 nob_cmd_append(&cmd,
                     "./src/musializer.c",
@@ -63,18 +66,19 @@ bool build_musializer(void)
         nob_cmd_append(&cmd, "x86_64-w64-mingw32-gcc");
         nob_cmd_append(&cmd, "-mwindows", "-Wall", "-Wextra", "-ggdb");
         nob_cmd_append(&cmd, "-I.");
-        nob_cmd_append(&cmd, "-I./raylib/raylib-"RAYLIB_VERSION"/src/");
+        nob_cmd_append(&cmd, "-I"RAYLIB_SRC_FOLDER);
         nob_cmd_append(&cmd, "-o", "./build/musializer");
         nob_cmd_append(&cmd,
             "./src/plug.c",
             "./src/ffmpeg_windows.c",
             "./src/musializer.c",
+            "./thirdparty/tinyfiledialogs.c",
             "./build/musializer.res"
             );
         nob_cmd_append(&cmd,
             nob_temp_sprintf("-L./build/raylib/%s", MUSIALIZER_TARGET_NAME),
             "-l:libraylib.a");
-        nob_cmd_append(&cmd, "-lwinmm", "-lgdi32");
+        nob_cmd_append(&cmd, "-lwinmm", "-lgdi32", "-lole32");
         nob_cmd_append(&cmd, "-static");
     if (!nob_cmd_run_sync(cmd)) nob_return_defer(false);
 #endif // MUSIALIZER_HOTRELOAD
@@ -104,7 +108,7 @@ bool build_raylib()
     }
 
     for (size_t i = 0; i < NOB_ARRAY_LEN(raylib_modules); ++i) {
-        const char *input_path = nob_temp_sprintf("./raylib/raylib-"RAYLIB_VERSION"/src/%s.c", raylib_modules[i]);
+        const char *input_path = nob_temp_sprintf(RAYLIB_SRC_FOLDER"%s.c", raylib_modules[i]);
         const char *output_path = nob_temp_sprintf("%s/%s.o", build_path, raylib_modules[i]);
         output_path = nob_temp_sprintf("%s/%s.o", build_path, raylib_modules[i]);
 
@@ -116,7 +120,7 @@ bool build_raylib()
             nob_cmd_append(&cmd, "-ggdb", "-DPLATFORM_DESKTOP", "-fPIC", "-DSUPPORT_FILEFORMAT_FLAC=1");
             nob_cmd_append(&cmd, "-DPLATFORM_DESKTOP");
             nob_cmd_append(&cmd, "-fPIC");
-            nob_cmd_append(&cmd, "-I./raylib/raylib-"RAYLIB_VERSION"/src/external/glfw/include");
+            nob_cmd_append(&cmd, "-I"RAYLIB_SRC_FOLDER"external/glfw/include");
             nob_cmd_append(&cmd, "-c", input_path);
             nob_cmd_append(&cmd, "-o", output_path);
 
@@ -132,7 +136,8 @@ bool build_raylib()
     const char *libraylib_path = nob_temp_sprintf("%s/libraylib.a", build_path);
 
     if (nob_needs_rebuild(libraylib_path, object_files.items, object_files.count)) {
-        nob_cmd_append(&cmd, "x86_64-w64-mingw32-ar", "-crs", libraylib_path);
+        nob_cmd_append(&cmd, MAYBE_PREFIXED("ar"));
+        nob_cmd_append(&cmd, "-crs", libraylib_path);
         for (size_t i = 0; i < NOB_ARRAY_LEN(raylib_modules); ++i) {
             const char *input_path = nob_temp_sprintf("%s/%s.o", build_path, raylib_modules[i]);
             nob_cmd_append(&cmd, input_path);

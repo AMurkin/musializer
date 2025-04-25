@@ -1,7 +1,8 @@
 #include <stdbool.h>
 
 #define NOB_IMPLEMENTATION
-#include "../nob.h"
+#define NOB_STRIP_PREFIX
+#include "../thirdparty/nob.h"
 #include "../build/config.h"
 #include "./configurer.c"
 

@@ -10,7 +10,9 @@
 #include "plug.h"
 #include "ffmpeg.h"
 #define NOB_IMPLEMENTATION
-#include "nob.h"
+#define NOB_STRIP_PREFIX
+#include "thirdparty/nob.h"
+#include "thirdparty/tinyfiledialogs.h"
 
 #include <raylib.h>
 #include <rlgl.h>
@@ -69,6 +71,8 @@ MUSIALIZER_PLUG void *plug_load_resource(const char *file_path, size_t *size)
 #define FFT_SIZE (1<<13)
 #define FONT_SIZE 64
 
+#define PREVIEW_FPS 60
+
 #define RENDER_FPS 30
 #define RENDER_FACTOR 100
 #define RENDER_WIDTH (16*RENDER_FACTOR)
@@ -94,6 +98,7 @@ MUSIALIZER_PLUG void *plug_load_resource(const char *file_path, size_t *size)
 #define HUD_POPUP_LIFETIME_SECS 2.0f
 #define HUD_POPUP_SLIDEIN_SECS 0.1f
 #define TOOLTIP_PADDING 20.0f
+#define TRACKLABEL_SCROLL_SECS 0.05f
 
 #define KEY_TOGGLE_PLAY KEY_SPACE
 #define KEY_RENDER      KEY_R
@@ -105,6 +110,7 @@ MUSIALIZER_PLUG void *plug_load_resource(const char *file_path, size_t *size)
 // https://learn.microsoft.com/en-us/cpp/c-runtime-library/complex-math-support?view=msvc-170#types-used-in-complex-math
 #ifdef _MSC_VER
 #    define Float_Complex _Fcomplex
+#    define cbuild(re, im) _FCbuild(re, im)
 #    define cfromreal(re) _FCbuild(re, 0)
 #    define cfromimag(im) _FCbuild(0, im)
 #    define mulcc _FCmulcc
@@ -112,6 +118,7 @@ MUSIALIZER_PLUG void *plug_load_resource(const char *file_path, size_t *size)
 #    define subcc(a, b) _FCbuild(crealf(a) - crealf(b), cimagf(a) - cimagf(b))
 #else
 #    define Float_Complex float complex
+#    define cbuild(re, im) ((re) + (im)*I)
 #    define cfromreal(re) (re)
 #    define cfromimag(im) ((im)*I)
 #    define mulcc(a, b) ((a)*(b))
@@ -201,10 +208,10 @@ typedef struct {
     float out_log[FFT_SIZE];
     float out_smooth[FFT_SIZE];
     float out_smear[FFT_SIZE];
+    // TODO: Make FFT Analyzer take into account multiple channels somehow
+    //   Extracted from https://github.com/tsoding/musializer/pull/11
 
-#ifndef MUSIALIZER_ACT_ON_PRESS
     uint64_t active_button_id;
-#endif // MUSIALIZER_ACT_ON_PRESS
 
     Popup_Tray pt;
 
@@ -243,25 +250,36 @@ static void fft_clean(void)
     memset(p->out_smear, 0, sizeof(p->out_smear));
 }
 
-// Ported from https://rosettacode.org/wiki/Fast_Fourier_transform#Python
-static void fft(float in[], size_t stride, Float_Complex out[], size_t n)
+// Ported from https://cp-algorithms.com/algebra/fft.html
+static void fft(float in[], Float_Complex out[], size_t n)
 {
-    assert(n > 0);
-
-    if (n == 1) {
-        out[0] = cfromreal(in[0]);
-        return;
+    for(size_t i = 0; i < n; i++) {
+        out[i] = cfromreal(in[i]);
     }
 
-    fft(in, stride*2, out, n/2);
-    fft(in + stride, stride*2,  out + n/2, n/2);
+    for (size_t i = 1, j = 0; i < n; i++) {
+        int bit = n >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) {
+            Float_Complex temp = out[i];
+            out[i] = out[j];
+            out[j] = temp;
+        }
+    }
 
-    for (size_t k = 0; k < n/2; ++k) {
-        float t = (float)k/n;
-        Float_Complex v = mulcc(cexpf(cfromimag(-2*PI*t)), out[k + n/2]);
-        Float_Complex e = out[k];
-        out[k]       = addcc(e, v);
-        out[k + n/2] = subcc(e, v);
+    for (size_t len = 2; len <= n; len <<= 1) {
+        float ang = 2 * PI / len;
+        Float_Complex wlen = cbuild(cosf(ang), sinf(ang));
+        for (size_t i = 0; i < n; i += len) {
+            Float_Complex w = cfromreal(1);
+            for (size_t j = 0; j < len / 2; j++) {
+                Float_Complex u = out[i+j], v = mulcc(out[i+j+len/2], w);
+                out[i+j] = addcc(u, v);
+                out[i+j+len/2] = subcc(u, v);
+                w = mulcc(w, wlen);
+            }
+        }
     }
 }
 
@@ -282,7 +300,7 @@ static size_t fft_analyze(float dt)
     }
 
     // FFT
-    fft(p->in_win, 1, p->out_raw, FFT_SIZE);
+    fft(p->in_win, p->out_raw, FFT_SIZE);
 
     // "Squash" into the Logarithmic Scale
     float step = 1.06;
@@ -662,7 +680,6 @@ static int button_with_id(uint64_t id, Rectangle boundary)
     Vector2 mouse = GetMousePosition();
     int hoverover = CheckCollisionPointRec(mouse, boundary);
 
-#ifndef MUSIALIZER_ACT_ON_PRESS
     int clicked = 0;
     if (p->active_button_id == 0) {
         if (hoverover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
@@ -674,10 +691,6 @@ static int button_with_id(uint64_t id, Rectangle boundary)
             if (hoverover) clicked = 1;
         }
     }
-#else
-    (void) id;
-    int clicked = hoverover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
-#endif // MUSIALIZER_ACT_ON_PRESS
 
     return (clicked<<1) | hoverover;
 }
@@ -705,7 +718,7 @@ static int button_with_location(const char *file, int line, Rectangle boundary)
 
 // NOTE: This is literally DrawTextEx() copy-pasted from Raylib itself but with the
 // max_width support and without newlines
-void track_label(Font font, const char *text, Vector2 position, float fontSize, Color tint, float max_width)
+void track_label(Font font, const char *text, Vector2 position, float fontSize, Color tint)
 {
     if (font.texture.id == 0) font = GetFontDefault();  // Security check in case of not valid font
 
@@ -718,7 +731,7 @@ void track_label(Font font, const char *text, Vector2 position, float fontSize, 
 
     float scaleFactor = fontSize/font.baseSize;         // Character quad scaling factor
 
-    for (int i = 0; i < size && textOffsetX < max_width;)
+    for (int i = 0; i < size;)
     {
         // Get next codepoint from byte string and glyph index in font
         int codepointByteCount = 0;
@@ -777,7 +790,6 @@ static void tracks_panel_with_location(const char *file, int line, Rectangle pan
     id = djb2(id, file, strlen(file));
     id = djb2(id, &line, sizeof(line));
 
-    BeginScissorMode(panel_boundary.x, panel_boundary.y, panel_boundary.width, panel_boundary.height);
     for (size_t i = 0; i < p->tracks.count; ++i) {
         Rectangle item_boundary = {
             .x = panel_boundary.x + panel_padding,
@@ -817,9 +829,42 @@ static void tracks_panel_with_location(const char *file, int line, Rectangle pan
             .y = item_boundary.y + item_boundary.height*0.5 - size.y*0.5,
         };
         // TODO: use SDF fonts
-        // TODO: we need a better indication that the label was cut out because of the overflow
-        // I was think about some sort of gradient. Ideally, we need to scroll the label on hover.
-        track_label(p->font, text, position, fontSize, WHITE, item_boundary.width - text_padding*2);
+        // Label overflow scroll handler
+        float max_width = item_boundary.width - text_padding*2;
+        uint64_t item_id = djb2(id, &i, sizeof(i));
+        int state = button_with_id(item_id, GetCollisionRec(panel_boundary, item_boundary));
+
+        if ((size.x > max_width)) { // <-- Item needs ScissorMode
+            BeginScissorMode(position.x, position.y, max_width, item_boundary.height);
+
+            if (state & BS_HOVEROVER) { // <-- Current item is being hovered on and needs scrolling
+                static float dt = 0;
+                static uint64_t hovered_label_id = 0;
+                static int px_shift = 0;
+                static bool scroll_left = true;
+
+                dt += GetFrameTime();
+                if (item_id != hovered_label_id) { // <-- But it is not same as the last hovered item, so reset the shift
+                    px_shift = 0;
+                    scroll_left = true;
+                    hovered_label_id = item_id;
+                } else { // <-- it is same as the last hovered item, so count the shift
+                    if (dt > TRACKLABEL_SCROLL_SECS) {
+                        dt = 0.0f;
+                        if ((abs(px_shift) >= size.x - max_width + 10) || (px_shift == 10)) { // <-- End of scroll (with 10 padding)
+                            scroll_left = !scroll_left; // <-- flip direction
+                        }
+                        scroll_left ? --px_shift : ++px_shift;
+                    }
+                }
+                position.x += px_shift; // <-- Apply the shift
+            }
+            track_label(p->font, text, position, fontSize, WHITE);
+            EndScissorMode();
+
+        } else { // <-- No need for ScissorMode
+            track_label(p->font, text, position, fontSize, WHITE);
+        }
     }
 
     // TODO: up and down clickable buttons on the scrollbar
@@ -865,7 +910,6 @@ static void tracks_panel_with_location(const char *file, int line, Rectangle pan
         }
     }
 
-    EndScissorMode();
 }
 
 #define fullscreen_button(preview_boundary) \
@@ -1260,6 +1304,10 @@ static void toggle_track_playing(Track *track)
 
 static void start_rendering_track(Track *track)
 {
+    char const * filter_params[] = { "*.mp4" };
+    char *output_path = tinyfd_saveFileDialog("Path to rendered video", "./", NOB_ARRAY_LEN(filter_params), filter_params, "mp4 video file");
+    if (output_path == NULL) return;
+
     StopMusicStream(track->music);
 
     fft_clean();
@@ -1269,10 +1317,22 @@ static void start_rendering_track(Track *track)
     p->wave_samples = LoadWaveSamples(p->wave);
     // TODO: set the rendering output path based on the input path
     // Basically output into the same folder
-    p->ffmpeg = ffmpeg_start_rendering(p->screen.texture.width, p->screen.texture.height, RENDER_FPS, track->file_path);
+    p->ffmpeg = ffmpeg_start_rendering(output_path, p->screen.texture.width, p->screen.texture.height, RENDER_FPS, track->file_path);
+    SetTargetFPS(0);
     p->rendering = true;
     p->cancel_rendering = false;
     SetTraceLogLevel(LOG_WARNING);
+}
+
+static void finish_rendering_track(Track *track)
+{
+    SetTraceLogLevel(LOG_INFO);
+    UnloadWave(p->wave);
+    UnloadWaveSamples(p->wave_samples);
+    SetTargetFPS(PREVIEW_FPS);
+    p->rendering = false;
+    fft_clean();
+    PlayMusicStream(track->music);
 }
 
 #ifdef MUSIALIZER_MICROPHONE
@@ -1380,6 +1440,8 @@ static bool toolbar(Track *track, Rectangle boundary)
     }
 #endif // MUSIALIZER_MICROPHONE
 
+    // TODO: implement "add new track" button that uses tinyfiledialogs
+
     bool volume_slider_interacted = volume_slider((CLITERAL(Rectangle) {
         x,
         boundary.y,
@@ -1414,7 +1476,7 @@ static void preview_screen(void)
         // Maybe we should do that in a separate thread.
         for (size_t i = 0; i < droppedFiles.count; ++i) {
             Music music = LoadMusicStream(droppedFiles.paths[i]);
-            if (IsMusicReady(music)) {
+            if (IsMusicValid(music)) {
                 AttachAudioStreamProcessor(music.stream, callback);
                 char *file_path = strdup(droppedFiles.paths[i]);
                 assert(file_path != NULL);
@@ -1544,20 +1606,55 @@ static void preview_screen(void)
             });
         }
     } else { // We are waiting for the user to Drag&Drop the Music
-        const char *label = "Drag&Drop Music Here";
+        const char *label = "Click to Select File";
+        int font_size = p->font.baseSize;
         Color color = WHITE;
-        Vector2 size = MeasureTextEx(p->font, label, p->font.baseSize, 0);
+        Vector2 size = MeasureTextEx(p->font, label, font_size, 0);
         Vector2 position = {
             w/2 - size.x/2,
             h/2 - size.y/2,
         };
-        DrawTextEx(p->font, label, position, p->font.baseSize, 0, color);
+        DrawTextEx(p->font, label, position, font_size, 0, color);
+
+        font_size /= 2;
+        label = "(or just Drag&Drop it)";
+        color = WHITE;
+        size = MeasureTextEx(p->font, label, font_size, 0);
+        position.y += font_size*2;
+        position.x = w/2 - size.x/2;
+        DrawTextEx(p->font, label, position, font_size, 0, color);
+
         popup_tray(&p->pt, CLITERAL(Rectangle) {
             .x = 0,
             .y = 0,
             .width = w,
             .height = h,
         });
+
+        if (button(((Rectangle) {0, 0, w, h})) & BS_CLICKED) {
+            int allow_multiple_selects = 0; // TODO: enable multiple selects
+            char const *filter_params[] = {"*.wav", "*.ogg", "*.mp3", "*.qoa", "*.xm", "*.mod", "*.flac"};
+            char *input_path = tinyfd_openFileDialog("Path to music file", "./", NOB_ARRAY_LEN(filter_params), filter_params, "music file", allow_multiple_selects);
+            if (input_path) {
+                Music music = LoadMusicStream(input_path);
+                if (IsMusicValid(music)) {
+                    AttachAudioStreamProcessor(music.stream, callback);
+                    char *file_path = strdup(input_path);
+                    assert(file_path != NULL);
+                    nob_da_append(&p->tracks, (CLITERAL(Track) {
+                        .file_path = file_path,
+                        .music = music,
+                    }));
+                } else {
+                    popup_tray_push(&p->pt);
+                }
+
+                if (current_track() == NULL && p->tracks.count > 0) {
+                    p->current_track = 0;
+                    PlayMusicStream(p->tracks.items[0].music);
+                }
+            }
+        }
     }
 }
 
@@ -1577,7 +1674,7 @@ static void capture_screen(void)
 
             const char *recording_file_path = "recording.wav";
             Music music = LoadMusicStream(recording_file_path);
-            if (IsMusicReady(music)) {
+            if (IsMusicValid(music)) {
                 AttachAudioStreamProcessor(music.stream, callback);
                 char *file_path = strdup(recording_file_path);
                 assert(file_path != NULL);
@@ -1636,12 +1733,7 @@ static void rendering_screen(void)
     NOB_ASSERT(track != NULL);
     if (p->ffmpeg == NULL) { // Starting FFmpeg process has failed for some reason
         if (IsKeyPressed(KEY_ESCAPE)) {
-            SetTraceLogLevel(LOG_INFO);
-            UnloadWave(p->wave);
-            UnloadWaveSamples(p->wave_samples);
-            p->rendering = false;
-            fft_clean();
-            PlayMusicStream(track->music);
+            finish_rendering_track(track);
         }
 
         const char *label = "FFmpeg Failure: Check the Logs";
@@ -1671,23 +1763,13 @@ static void rendering_screen(void)
                 // cause it should deallocate all the resources even in case of a failure.
                 p->ffmpeg = NULL;
             } else {
-                SetTraceLogLevel(LOG_INFO);
-                UnloadWave(p->wave);
-                UnloadWaveSamples(p->wave_samples);
-                p->rendering = false;
-                fft_clean();
-                PlayMusicStream(track->music);
+                finish_rendering_track(track);
             }
         } else if (IsKeyPressed(KEY_ESCAPE) || p->cancel_rendering) {  // Rendering is cancelled
             ffmpeg_end_rendering(p->ffmpeg, true);
             p->ffmpeg = NULL;
 
-            SetTraceLogLevel(LOG_INFO);
-            UnloadWave(p->wave);
-            UnloadWaveSamples(p->wave_samples);
-            p->rendering = false;
-            fft_clean();
-            PlayMusicStream(track->music);
+            finish_rendering_track(track);
         } else { // Rendering is going...
             // Label
             const char *label = "Rendering video...";
@@ -1892,6 +1974,7 @@ MUSIALIZER_PLUG void plug_init(void)
 
     // TODO: restore master volume between sessions
     SetMasterVolume(0.5);
+    SetTargetFPS(PREVIEW_FPS);
 }
 
 MUSIALIZER_PLUG void *plug_pre_reload(void)

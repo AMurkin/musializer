@@ -1,4 +1,3 @@
-// TODO: confirm that MSVC build works on Windows
 #define MUSIALIZER_TARGET_NAME "win64-msvc"
 
 bool build_musializer(void)
@@ -20,21 +19,22 @@ bool build_musializer(void)
             nob_cmd_append(&cmd, "/LD");
             nob_cmd_append(&cmd, "/Fobuild\\", "/Fe./build/libplug.dll");
             nob_cmd_append(&cmd, "/I", "./");
-            nob_cmd_append(&cmd, "/I", "./raylib/raylib-"RAYLIB_VERSION"/src/");
+            nob_cmd_append(&cmd, "/I", RAYLIB_SRC_FOLDER);
             nob_cmd_append(&cmd,
                 "src/plug.c",
-                "src/ffmpeg_windows.c");
+                "src/ffmpeg_windows.c",
+                "./thirdparty/tinyfiledialogs.c");
             nob_cmd_append(&cmd,
                 "/link",
                 nob_temp_sprintf("/LIBPATH:build/raylib/%s", MUSIALIZER_TARGET_NAME),
                 "raylib.lib");
-            nob_cmd_append(&cmd, "Winmm.lib", "gdi32.lib", "User32.lib", "Shell32.lib");
+            nob_cmd_append(&cmd, "Winmm.lib", "gdi32.lib", "User32.lib", "Shell32.lib", "Ole32.lib", "comdlg32.lib");
         nob_da_append(&procs, nob_cmd_run_async(cmd));
 
         cmd.count = 0;
             nob_cmd_append(&cmd, "cl.exe");
             nob_cmd_append(&cmd, "/I", "./");
-            nob_cmd_append(&cmd, "/I", "./raylib/raylib-"RAYLIB_VERSION"/src/");
+            nob_cmd_append(&cmd, "/I", RAYLIB_SRC_FOLDER);
             nob_cmd_append(&cmd, "/Fobuild\\", "/Febuild\\musializer.exe");
             nob_cmd_append(&cmd,
                 "./src/musializer.c",
@@ -53,19 +53,20 @@ bool build_musializer(void)
     cmd.count = 0;
         nob_cmd_append(&cmd, "cl.exe");
         nob_cmd_append(&cmd, "/I", "./");
-        nob_cmd_append(&cmd, "/I", "./raylib/raylib-"RAYLIB_VERSION"/src/");
+        nob_cmd_append(&cmd, "/I", RAYLIB_SRC_FOLDER);
         nob_cmd_append(&cmd, "/Fobuild\\", "/Febuild\\musializer.exe");
         nob_cmd_append(&cmd,
             "./src/musializer.c",
             "./src/plug.c",
-            "./src/ffmpeg_windows.c");
+            "./src/ffmpeg_windows.c",
+            "./thirdparty/tinyfiledialogs.c");
         nob_cmd_append(&cmd,
             "/link",
             "/SUBSYSTEM:WINDOWS",
             "/entry:mainCRTStartup",
             nob_temp_sprintf("/LIBPATH:build/raylib/%s", MUSIALIZER_TARGET_NAME),
             "raylib.lib");
-        nob_cmd_append(&cmd, "Winmm.lib", "gdi32.lib", "User32.lib", "Shell32.lib", "./build/musializer.res");
+        nob_cmd_append(&cmd, "Winmm.lib", "gdi32.lib", "User32.lib", "Shell32.lib", "Ole32.lib", "comdlg32.lib", "./build/musializer.res");
         // TODO: is some sort of `-static` flag needed for MSVC to get a statically linked executable
         //nob_cmd_append(&cmd, "-static");
     if (!nob_cmd_run_sync(cmd)) nob_return_defer(false);
@@ -96,7 +97,7 @@ bool build_raylib(void)
     }
 
     for (size_t i = 0; i < NOB_ARRAY_LEN(raylib_modules); ++i) {
-        const char *input_path = nob_temp_sprintf("./raylib/raylib-"RAYLIB_VERSION"/src/%s.c", raylib_modules[i]);
+        const char *input_path = nob_temp_sprintf(RAYLIB_SRC_FOLDER"%s.c", raylib_modules[i]);
         const char *output_path = nob_temp_sprintf("%s/%s.obj", build_path, raylib_modules[i]);
 
         nob_da_append(&object_files, output_path);
@@ -107,7 +108,7 @@ bool build_raylib(void)
             #ifdef MUSIALIZER_HOTRELOAD
                 nob_cmd_append(&cmd, "/DBUILD_LIBTYPE_SHARED");
             #endif
-            nob_cmd_append(&cmd, "/I", "./raylib/raylib-"RAYLIB_VERSION"/src/external/glfw/include");
+            nob_cmd_append(&cmd, "/I", RAYLIB_SRC_FOLDER"external/glfw/include");
             nob_cmd_append(&cmd, "/c", input_path);
             nob_cmd_append(&cmd, nob_temp_sprintf("/Fo%s", output_path));
             Nob_Proc proc = nob_cmd_run_async(cmd);

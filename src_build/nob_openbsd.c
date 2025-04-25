@@ -14,12 +14,13 @@ bool build_musializer(void)
                 nob_cmd_append(&cmd, "cc");
                 nob_cmd_append(&cmd, "-Wall", "-Wextra", "-ggdb");
                 nob_cmd_append(&cmd, "-I.");
-                nob_cmd_append(&cmd, "-I./raylib/raylib-"RAYLIB_VERSION"/src/");
+                nob_cmd_append(&cmd, "-I"RAYLIB_SRC_FOLDER);
                 nob_cmd_append(&cmd, "-fPIC", "-shared");
                 nob_cmd_append(&cmd, "-o", "./build/libplug.so");
+                nob_cmd_append(&cmd, "./thirdparty/tinyfiledialogs.c");
                 nob_cmd_append(&cmd,
                     "./src/plug.c",
-                    "./src/ffmpeg_linux.c");
+                    "./src/ffmpeg_posix.c");
                 nob_cmd_append(&cmd,
                     nob_temp_sprintf("-L./build/raylib/%s", MUSIALIZER_TARGET_NAME),
                     "-l:libraylib.so");
@@ -30,11 +31,11 @@ bool build_musializer(void)
                 nob_cmd_append(&cmd, "cc");
                 nob_cmd_append(&cmd, "-Wall", "-Wextra", "-ggdb");
                 nob_cmd_append(&cmd, "-I.");
-                nob_cmd_append(&cmd, "-I./raylib/raylib-"RAYLIB_VERSION"/src/");
+                nob_cmd_append(&cmd, "-I"RAYLIB_SRC_FOLDER);
                 nob_cmd_append(&cmd, "-o", "./build/musializer");
                 nob_cmd_append(&cmd,
                     "./src/musializer.c",
-                    "./src/hotreload_linux.c");
+                    "./src/hotreload_posix.c");
                 nob_cmd_append(&cmd,
                     "-Wl,-rpath=./build/",
                     "-Wl,-rpath=./",
@@ -52,11 +53,12 @@ bool build_musializer(void)
             nob_cmd_append(&cmd, "cc");
             nob_cmd_append(&cmd, "-Wall", "-Wextra", "-ggdb");
             nob_cmd_append(&cmd, "-I.");
-            nob_cmd_append(&cmd, "-I./raylib/raylib-"RAYLIB_VERSION"/src/");
+            nob_cmd_append(&cmd, "-I"RAYLIB_SRC_FOLDER);
             nob_cmd_append(&cmd, "-o", "./build/musializer");
+            nob_cmd_append(&cmd, "./thirdparty/tinyfiledialogs.c");
             nob_cmd_append(&cmd,
                 "./src/plug.c",
-                "./src/ffmpeg_linux.c",
+                "./src/ffmpeg_posix.c",
                 "./src/musializer.c");
             nob_cmd_append(&cmd,
                 nob_temp_sprintf("-L./build/raylib/%s", MUSIALIZER_TARGET_NAME),
@@ -90,7 +92,7 @@ bool build_raylib(void)
     }
 
     for (size_t i = 0; i < NOB_ARRAY_LEN(raylib_modules); ++i) {
-        const char *input_path = nob_temp_sprintf("./raylib/raylib-"RAYLIB_VERSION"/src/%s.c", raylib_modules[i]);
+        const char *input_path = nob_temp_sprintf(RAYLIB_SRC_FOLDER"%s.c", raylib_modules[i]);
         const char *output_path = nob_temp_sprintf("%s/%s.o", build_path, raylib_modules[i]);
         output_path = nob_temp_sprintf("%s/%s.o", build_path, raylib_modules[i]);
 
@@ -99,8 +101,9 @@ bool build_raylib(void)
         if (nob_needs_rebuild(output_path, &input_path, 1)) {
             cmd.count = 0;
             nob_cmd_append(&cmd, "cc");
+            nob_cmd_append(&cmd, "-w");
             nob_cmd_append(&cmd, "-ggdb", "-DPLATFORM_DESKTOP", "-fPIC", "-DSUPPORT_FILEFORMAT_FLAC=1");
-            nob_cmd_append(&cmd, "-I./raylib/raylib-"RAYLIB_VERSION"/src/external/glfw/include");
+            nob_cmd_append(&cmd, "-I"RAYLIB_SRC_FOLDER"external/glfw/include");
             nob_cmd_append(&cmd, "-c", input_path);
             nob_cmd_append(&cmd, "-o", output_path);
             nob_cmd_append(&cmd, "-I/usr/X11R6/include");
